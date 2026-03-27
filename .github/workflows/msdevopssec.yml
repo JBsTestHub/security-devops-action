@@ -1,9 +1,12 @@
 name: security-devops-action Official Build
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
-      - release/vNext
+      - main
 
 permissions:
   contents: read
