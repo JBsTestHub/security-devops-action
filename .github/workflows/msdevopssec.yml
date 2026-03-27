@@ -10,6 +10,95 @@ on:
 permissions:
   id-token: write # This is required for federation to Defender for DevOps
   security-events: write # This is required to upload SARIF files
+  contents: read # Required to read repository files
+  pull-requests: write # Required to post comments on PRs
+
+jobs:
+  sample:
+    name: MSDO on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      
+      # Checkout your code repository to scan
+    - uses: actions/checkout@v6
+
+      # Run analyzers
+    - name: Run Microsoft Security DevOps Analysis
+      uses: microsoft/security-devops-action@v1
+      id: msdo
+
+      # Upload alerts to the Security tab
+    - name: Upload alerts to Security tab
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.msdo.outputs.sarifFile }}
+        wait-for-processing: true
+
+      # Upload alerts file as a workflow artifact
+    - name: Upload alerts file as a workflow artifact
+      uses: actions/upload-artifact@v7
+      with:  
+        name: alerts-${{ matrix.os }}
+        path: ${{ steps.msdo.outputs.sarifFile }}
+
+      # Post security findings as PR comment
+    - name: Post security findings to PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const sarifFile = '${{ steps.msdo.outputs.sarifFile }}';
+          
+          if (!fs.existsSync(sarifFile)) {
+            console.log('No SARIF file found');
+            return;
+          }
+          
+          const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+          const results = sarif.runs[0]?.results || [];
+          
+          if (results.length === 0) {
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Security Scan Complete**\n\nNo security issues found in this pull request.'
+            });
+            return;
+          }
+          
+          let comment = '🔒 **Security Findings Detected**\n\n';
+          comment += `Found **${results.length}** security issue(s):\n\n`;
+          
+          results.forEach((result, index) => {
+            const rule = result.ruleId || 'Unknown Rule';
+            const message = result.message?.text || 'No description';
+            const level = result.level || 'warning';
+            const severity = level === 'error' ? '🔴' : level === 'warning' ? '🟡' : '🟢';
+            
+            comment += `${severity} **${rule}** (${level})\n`;
+            comment += `   ${message}\n\n`;
+          });
+          
+          comment += '---\n';
+          comment += `**Scan Summary:** OS: ${{ matrix.os }} | Platform: GitHub Actions\n`;
+          comment += 'For detailed results, check the Security tab or the workflow artifacts.';
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+permissions:
+  id-token: write # This is required for federation to Defender for DevOps
+  security-events: write # This is required to upload SARIF files
 
 jobs:
   sample:
