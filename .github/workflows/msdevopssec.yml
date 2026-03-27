@@ -1,98 +1,49 @@
-name: MSDO Sample Workflow
+name: security-devops-action Official Build
+
 on:
   pull_request:
-    branches: 
-     - main
-  push:
     branches:
-      - main
+      - release/vNext
 
 permissions:
-  id-token: write # This is required for federation to Defender for DevOps
-  security-events: write # This is required to upload SARIF files
-  contents: read # Required to read repository files
-  pull-requests: write # Required to post comments on PRs
+  contents: read
 
 jobs:
-  sample:
-    name: MSDO on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  build:
+    runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        os: [windows-latest]
+    permissions:
+      contents: write
 
     steps:
-      
-      # Checkout your code repository to scan
-    - uses: actions/checkout@v6
+    - name: Checkout repository
+      uses: actions/checkout@v6
 
-      # Run analyzers
-    - name: Run Microsoft Security DevOps Analysis
-      uses: microsoft/security-devops-action@v1
-      id: msdo
+    - name: Extract branch name
+      shell: bash
+      run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+      id: extract_branch
 
-      # Upload alerts to the Security tab
-    - name: Upload alerts to Security tab
-      uses: github/codeql-action/upload-sarif@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
       with:
-        sarif_file: ${{ steps.msdo.outputs.sarifFile }}
-        wait-for-processing: true
+        node-version: '24'
 
-      # Upload alerts file as a workflow artifact
-    - name: Upload alerts file as a workflow artifact
-      uses: actions/upload-artifact@v7
-      with:  
-        name: alerts-${{ matrix.os }}
-        path: ${{ steps.msdo.outputs.sarifFile }}
+    - name: Configure npm to use GitHub Packages
+      run: echo "//npm.pkg.github.com/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
 
-      # Post security findings as PR comment
-    - name: Post security findings to PR
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const sarifFile = '${{ steps.msdo.outputs.sarifFile }}';
-          
-          if (!fs.existsSync(sarifFile)) {
-            console.log('No SARIF file found');
-            return;
-          }
-          
-          const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
-          const results = sarif.runs[0]?.results || [];
-          
-          if (results.length === 0) {
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '✅ **Security Scan Complete**\n\nNo security issues found in this pull request.'
-            });
-            return;
-          }
-          
-          let comment = '🔒 **Security Findings Detected**\n\n';
-          comment += `Found **${results.length}** security issue(s):\n\n`;
-          
-          results.forEach((result, index) => {
-            const rule = result.ruleId || 'Unknown Rule';
-            const message = result.message?.text || 'No description';
-            const level = result.level || 'warning';
-            const severity = level === 'error' ? '🔴' : level === 'warning' ? '🟡' : '🟢';
-            
-            comment += `${severity} **${rule}** (${level})\n`;
-            comment += `   ${message}\n\n`;
-          });
-          
-          comment += '---\n';
-          comment += `**Scan Summary:** OS: ${{ matrix.os }} | Platform: GitHub Actions\n`;
-          comment += 'For detailed results, check the Security tab or the workflow artifacts.';
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
+    - name: Install dependencies
+      run: npm install
+
+    - name: Compile TypeScript
+      run: npm run build
+
+    - name: Commit compiled JavaScript
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git add lib/.
+        git commit -m 'Official Build: Compile TypeScript to JavaScript'
+        git push --force origin HEAD:${{ steps.extract_branch.outputs.branch }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
