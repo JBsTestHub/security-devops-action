@@ -1,9 +1,4 @@
 name: security-devops-action Official Build
-
-on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
